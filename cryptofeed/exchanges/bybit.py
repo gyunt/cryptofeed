@@ -16,10 +16,11 @@ from datetime import datetime as dt
 from yapic import json
 
 from cryptofeed.connection import AsyncConnection, RestEndpoint, Routes, WebsocketEndpoint
-from cryptofeed.defines import BID, ASK, BUY, BYBIT, CANCELLED, CANCELLING, CANDLES, FAILED, FILLED, FUNDING, L2_BOOK, LIMIT, LIQUIDATIONS, MAKER, MARKET, OPEN, PARTIAL, SELL, SUBMITTING, TAKER, TRADES, OPEN_INTEREST, INDEX, ORDER_INFO, FILLS, FUTURES, PERPETUAL
+from cryptofeed.defines import BID, ASK, BUY, BYBIT, CANCELLED, CANCELLING, CANDLES, FAILED, FILLED, FUNDING, L2_BOOK, \
+    LIMIT, LIQUIDATIONS, MAKER, MARKET, OPEN, PARTIAL, SELL, SUBMITTING, TAKER, TRADES, OPEN_INTEREST, INDEX, \
+    ORDER_INFO, FILLS, FUTURES, PERPETUAL
 from cryptofeed.feed import Feed
 from cryptofeed.types import OrderBook, Trade, Index, OpenInterest, Funding, OrderInfo, Fill, Candle, Liquidation
-
 
 LOG = logging.getLogger('feedhandler')
 
@@ -38,13 +39,37 @@ class Bybit(Feed):
         LIQUIDATIONS: 'liquidation'
     }
     websocket_endpoints = [
-        WebsocketEndpoint('wss://stream.bybit.com/realtime', channel_filter=(websocket_channels[L2_BOOK], websocket_channels[TRADES], websocket_channels[INDEX], websocket_channels[OPEN_INTEREST], websocket_channels[FUNDING], websocket_channels[CANDLES], websocket_channels[LIQUIDATIONS]), instrument_filter=('QUOTE', ('USD',)), sandbox='wss://stream-testnet.bybit.com/realtime', options={'compression': None}),
-        WebsocketEndpoint('wss://stream.bybit.com/realtime_public', channel_filter=(websocket_channels[L2_BOOK], websocket_channels[TRADES], websocket_channels[INDEX], websocket_channels[OPEN_INTEREST], websocket_channels[FUNDING], websocket_channels[CANDLES], websocket_channels[LIQUIDATIONS]), instrument_filter=('QUOTE', ('USDT',)), sandbox='wss://stream-testnet.bybit.com/realtime_public', options={'compression': None}),
-        WebsocketEndpoint('wss://stream.bybit.com/realtime_private', channel_filter=(websocket_channels[ORDER_INFO], websocket_channels[FILLS]), instrument_filter=('QUOTE', ('USDT',)), sandbox='wss://stream-testnet.bybit.com/realtime_private', options={'compression': None}),
+        WebsocketEndpoint('wss://stream.bybit.com/realtime', channel_filter=(
+            websocket_channels[L2_BOOK], websocket_channels[TRADES], websocket_channels[INDEX],
+            websocket_channels[OPEN_INTEREST], websocket_channels[FUNDING], websocket_channels[CANDLES],
+            websocket_channels[LIQUIDATIONS]), instrument_filter=('QUOTE', ('USD',)),
+                          sandbox='wss://stream-testnet.bybit.com/realtime', options={'compression': None}),
+        WebsocketEndpoint('wss://stream.bybit.com/realtime_public', channel_filter=(
+            websocket_channels[L2_BOOK], websocket_channels[TRADES], websocket_channels[INDEX],
+            websocket_channels[OPEN_INTEREST], websocket_channels[FUNDING], websocket_channels[CANDLES],
+            websocket_channels[LIQUIDATIONS]), instrument_filter=('QUOTE', ('USDT',)),
+                          sandbox='wss://stream-testnet.bybit.com/realtime_public', options={'compression': None}),
+        WebsocketEndpoint('wss://stream.bybit.com/realtime_private',
+                          channel_filter=(websocket_channels[ORDER_INFO], websocket_channels[FILLS]),
+                          instrument_filter=('QUOTE', ('USDT',)),
+                          sandbox='wss://stream-testnet.bybit.com/realtime_private', options={'compression': None}),
+        WebsocketEndpoint('wss://stream.bybit.com/perpetual/ws/v1/realtime_public', channel_filter=(
+            websocket_channels[L2_BOOK], websocket_channels[TRADES], websocket_channels[INDEX],
+            websocket_channels[OPEN_INTEREST], websocket_channels[FUNDING], websocket_channels[CANDLES],
+            websocket_channels[LIQUIDATIONS]), instrument_filter=('QUOTE', ('USDC',)),
+                          sandbox='wss://stream-testnet.bybit.com/perpetual/ws/v1/realtime_public', options={'compression': None}),
+        WebsocketEndpoint('wss://stream.bybit.com/trade/option/usdc/private/v1',
+                          channel_filter=(websocket_channels[ORDER_INFO], websocket_channels[FILLS]),
+                          instrument_filter=('QUOTE', ('USDC',)),
+                          sandbox='wss://stream-testnet.bybit.com/trade/option/usdc/private/v1', options={'compression': None}),
     ]
-    rest_endpoints = [RestEndpoint('https://api.bybit.com', routes=Routes('/v2/public/symbols'))]
+    rest_endpoints = [RestEndpoint('https://api.bybit.com', routes=Routes('/v2/public/symbols')),
+                      RestEndpoint('https://api.bybit.com', routes=Routes('/perpetual/usdc/openapi/public/v1/symbols'))
+                      ]
+
     valid_candle_intervals = {'1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '1d', '1w', '1M'}
-    candle_interval_map = {'1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30', '1h': '60', '2h': '120', '4h': '240', '6h': '360', '1d': 'D', '1w': 'W', '1M': 'M'}
+    candle_interval_map = {'1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30', '1h': '60', '2h': '120',
+                           '4h': '240', '6h': '360', '1d': 'D', '1w': 'W', '1M': 'M'}
 
     @classmethod
     def timestamp_normalize(cls, ts: Union[int, dt]) -> float:
@@ -54,9 +79,14 @@ class Bybit(Feed):
             return ts.timestamp()
 
     @classmethod
-    def _parse_symbol_data(cls, data: dict) -> Tuple[Dict, Dict]:
+    def _parse_symbol_data(cls, data: Union[dict, list]) -> Tuple[Dict, Dict]:
         ret = {}
         info = defaultdict(dict)
+
+        original_data = data
+
+        if isinstance(original_data, list):
+            data = original_data[0]
 
         # PERPETUAL & FUTURES
         for symbol in data['result']:
@@ -75,6 +105,23 @@ class Bybit(Feed):
             ret[s.normalized] = symbol['name']
             info['tick_size'][s.normalized] = symbol['price_filter']['tick_size']
             info['instrument_type'][s.normalized] = stype
+
+        if isinstance(original_data, list):
+            # USDC case
+            data = original_data[1]
+            for symbol in data['result']:
+                assert symbol['quoteCoin'] == 'USD'
+                assert symbol['symbol'].endswith('PERP')
+
+                base = symbol['baseCoin']
+                quote = 'USDC'
+                stype = PERPETUAL
+
+                s = Symbol(base, quote, type=stype)
+
+                ret[s.normalized] = symbol['symbol']
+                info['tick_size'][s.normalized] = symbol['tickSize']
+                info['instrument_type'][s.normalized] = stype
 
         return ret, info
 
@@ -516,5 +563,6 @@ class Bybit(Feed):
         # https://bybit-exchange.github.io/docs/inverse/#t-websocketauthentication
 
         expires = int((time.time() + 60)) * 1000
-        signature = str(hmac.new(bytes(key_secret, 'utf-8'), bytes(f'GET/realtime{expires}', 'utf-8'), digestmod='sha256').hexdigest())
+        signature = str(hmac.new(bytes(key_secret, 'utf-8'), bytes(f'GET/realtime{expires}', 'utf-8'),
+                                 digestmod='sha256').hexdigest())
         return json.dumps({'op': 'auth', 'args': [key_id, expires, signature]})
