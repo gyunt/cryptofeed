@@ -1,10 +1,16 @@
 import logging
+from decimal import Decimal
+from pprint import pprint
 from typing import Tuple, Dict, List
 
+from yapic import json
+
+from cryptofeed.connection import AsyncConnection
 from cryptofeed.connection import RestEndpoint, Routes, WebsocketEndpoint
 from cryptofeed.defines import CANDLES, L1_BOOK, POLYGON
 from cryptofeed.feed import Feed
 from cryptofeed.symbols import Symbol, Symbols
+from cryptofeed.types import L1Book
 
 LOG = logging.getLogger('feedhandler')
 
@@ -19,6 +25,10 @@ class Polygon(Feed):
         CANDLES: 'CA.{}',
         L1_BOOK: 'C.{}',
     }
+
+    @classmethod
+    def is_authenticated_channel(cls, channel: str) -> bool:
+        return channel in (CANDLES, L1_BOOK)
 
     def symbol_mapping(self, refresh=False) -> Dict:
         if Symbols.populated(self.id) and not refresh:
@@ -53,6 +63,56 @@ class Polygon(Feed):
         for ticker in data:
             base_curr, quote_curr = ticker['base_currency_symbol'], ticker['currency_symbol']
             s = Symbol(base_curr, quote_curr)
-            ret[s.normalized] = ticker['ticker']
+            ret[s.normalized] = f"{base_curr}/{quote_curr}"
             info['instrument_type'][s.normalized] = s.type
         return ret, info
+
+    async def _quote(self, quote: dict, timestamp: float):
+        book = L1Book(
+            self.id,
+            self.exchange_symbol_to_std_symbol(quote['p']),
+            quote['b'],
+            Decimal(0),
+            quote['a'],
+            Decimal(0),
+            self.timestamp_normalize(quote['t']),
+            raw=quote
+        )
+        await self.callback(L1_BOOK, book, timestamp)
+
+    async def message_handler(self, msg: str, conn, timestamp: float):
+        messages = json.loads(msg, parse_float=Decimal)
+
+        for msg in messages:
+            if 'ev' in msg:
+                if msg['ev'] == 'C':
+                    await self._quote(msg, timestamp)
+                else:
+                    LOG.warning("%s: Unknown message in msg_dict: %s", conn.uuid, msg)
+            else:
+                LOG.warning("%s: Unknown message in msg_dict: %s", conn.uuid, msg)
+
+    async def authenticate(self, conn: AsyncConnection):
+        if self.requires_authentication:
+            auth = {
+                "action": "auth",
+                "params": self.key_id,
+            }
+            await conn.write(json.dumps(auth))
+            LOG.debug(f"{conn.uuid}: Authenticating with message: {auth}")
+        return conn
+
+    async def subscribe(self, conn: AsyncConnection):
+        for channel in self.subscription:
+            pairs = self.subscription[channel]
+
+            channels = [f"{channel.format('C:' + pair.replace('/', '-'))}"
+                        for pair in pairs]
+
+            message = {"action": "subscribe",
+                       "params": ",".join(channels)}
+            await conn.write(json.dumps(message))
+
+    @classmethod
+    def timestamp_normalize(cls, ts: float) -> float:
+        return ts / 1000.0
