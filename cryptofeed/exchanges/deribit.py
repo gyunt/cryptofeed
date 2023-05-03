@@ -5,6 +5,7 @@ from typing import Dict, Tuple
 import hashlib
 import hmac
 from datetime import datetime
+from pprint import pformat
 
 from yapic import json
 
@@ -59,7 +60,11 @@ class Deribit(Feed, DeribitRestMixin):
                 if base not in currencies:
                     currencies.append(base)
                 quote = e['quote_currency']
-                stype = e['kind'] if e['settlement_period'] != 'perpetual' else PERPETUAL
+                try:
+                    stype = e['kind'] if e['kind'] == 'spot' or e['settlement_period'] != 'perpetual' else PERPETUAL
+                except KeyError:
+                    print(pformat(e))
+                    exit()
                 otype = e.get('option_type')
                 if stype in ('option_combo', 'future_combo'):
                     continue
