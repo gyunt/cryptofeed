@@ -4,6 +4,7 @@ Copyright (C) 2017-2023 Bryant Moscon - bmoscon@gmail.com
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
+import datetime
 from datetime import datetime as dt, timezone
 from typing import Dict, Tuple, Union
 
@@ -45,7 +46,7 @@ class Symbol:
     @staticmethod
     def date_format(date):
         if isinstance(date, (int, float)):
-            date = dt.fromtimestamp(date, tz=timezone.utc)
+            date = datetime.fromtimestamp(date, tz=timezone.utc)
         if isinstance(date, dt):
             year = str(date.year)[2:]
             month = Symbol.month_code(date.month)
