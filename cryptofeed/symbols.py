@@ -46,7 +46,7 @@ class Symbol:
     @staticmethod
     def date_format(date):
         if isinstance(date, (int, float)):
-            date = datetime.fromtimestamp(date, tz=timezone.utc)
+            date = dt.fromtimestamp(date, tz=timezone.utc)
         if isinstance(date, dt):
             year = str(date.year)[2:]
             month = Symbol.month_code(date.month)
